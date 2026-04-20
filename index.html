@@ -1,0 +1,353 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Central Tickets - Gerador de Laudo Técnico</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/html2pdf.js/0.10.1/html2pdf.bundle.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Aptos:wght@400;700&display=swap');
+:root { --primary: #0758E8; --secondary: #00b4ff; }
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family:'Aptos', Arial, sans-serif; background:linear-gradient(135deg,#f4f7ff,#e6f0ff); padding:20px; color: #333; }
+
+.container { max-width:1200px; margin:0 auto; background:white; border-radius:12px; box-shadow:0 10px 30px rgba(7,88,232,.15); overflow:hidden; }
+header { background:var(--primary); color:white; padding:15px 30px; display:flex; align-items:center; justify-content: space-between; }
+.header-left { display: flex; align-items: center; gap: 20px; }
+.header-logo { height: 45px; filter: brightness(0) invert(1); }
+.btn { background:var(--primary); color:white; border:none; padding:10px 20px; border-radius:6px; cursor:pointer; font-weight:700; transition: 0.3s; }
+.btn:hover { background: #0541ab; }
+.btn:disabled { background:#ccc; cursor:not-allowed; }
+main { padding:30px; }
+table { width:100%; border-collapse:collapse; margin-top:15px; }
+th, td { padding:12px; border-bottom:1px solid #eee; text-align: left; }
+th { background:#f8fbff; color:var(--primary); }
+.upload-section { margin-top: 20px; padding: 20px; background: #fff4e5; border: 2px dashed #ff9800; border-radius: 8px; display: none; }
+
+/* Estilização do PDF */
+.document-preview { width: 210mm; min-height: 297mm; margin: 20px auto; background: white; position: relative; box-shadow: 0 0 20px rgba(0,0,0,0.1); }
+.watermark { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); width: 60%; opacity: 0.08; z-index: 1; pointer-events: none; }
+.document-content { position: relative; z-index: 2; padding: 35mm 20mm; color: #000; }
+.logo-left { position: absolute; top: 10mm; left: 10mm; width: 180px; }
+.logo-right { position: absolute; top: 10mm; right: 10mm; width: 90px; }
+.header-table { position: absolute; top: 25mm; left: 0; width: 100%; border-collapse: collapse; font-size: 9pt; border-top: 2px solid var(--primary); border-bottom: 2px solid var(--primary); }
+.header-table td { padding: 5px; text-align: center; border: none; color: #555; }
+.title-laudo { text-align: center; font-size: 16pt; font-weight: 700; margin: 15mm 0 10mm; text-transform: uppercase; color: #000; border-bottom: 1px solid #eee; padding-bottom: 10px; }
+.info-box { border: 1px solid #ccc; padding: 15px; margin-bottom: 20px; font-size: 11pt; background: #fafafa; }
+.info-row { margin-bottom: 5px; display: flex; }
+.info-row strong { width: 140px; color: #555; }
+.pure-text-area { white-space: pre-wrap; word-wrap: break-word; line-height: 1.6; color: #333; text-align: justify; font-size: 10.5pt; }
+
+.modal { display:none; position:fixed; inset:0; background:rgba(0,0,0,.8); z-index:1000; align-items:center; justify-content:center; overflow: auto; padding: 20px; }
+.modal-content { background:white; border-radius:12px; width:100%; max-width:1000px; max-height: 95vh; overflow-y: auto; }
+.alert { padding:15px; border-radius:6px; position: fixed; top: 20px; right: 20px; z-index: 9999; min-width: 300px; box-shadow: 0 4px 12px rgba(0,0,0,0.2); font-weight: bold; }
+.success { background:#d4edda; color:#155724; border-left: 5px solid #28a745; }
+.error { background:#f8d7da; color:#721c24; border-left: 5px solid #dc3545; }
+</style>
+</head>
+<body>
+<div class="container">
+<header>
+<div class="header-left">
+<img src="https://i.ibb.co/xqHQHSgX/2-small.png" class="header-logo">
+<h1>Central Tickets - Gerador de Laudo</h1>
+</div>
+<button class="btn" id="btn-conectar" onclick="iniciarSessao()"> Conectar ao GLPI</button>
+</header>
+
+<main>
+    <div style="display: flex; gap: 10px; margin-bottom: 20px;">
+        <button class="btn" id="btn-buscar" onclick="buscarTickets()" disabled> Buscar Tickets (Categoria 913)</button>
+    </div>
+
+    <div id="alert-area"></div>
+
+    <table>
+        <thead>
+            <tr>
+                <th>ID do Ticket</th>
+                <th>Solicitante / Título</th>
+                <th>Ações</th>
+            </tr>
+        </thead>
+        <tbody id="tbody-tickets">
+            <tr><td colspan="3" style="text-align:center; padding: 40px; color: #888;">Efetue a conexão para listar os chamados pendentes.</td></tr>
+        </tbody>
+    </table>
+
+    <div id="upload-box" class="upload-section">
+        <h3 style="margin-bottom:10px; color: #e65100;">Anexar Documento ao Ticket #<span id="target-ticket-id"></span></h3>
+        <p style="font-size: 0.9em; margin-bottom: 15px;">O servidor aceita arquivos até 2MB. Selecione o PDF gerado abaixo:</p>
+        <input type="file" id="file-input" accept="application/pdf" style="margin-bottom: 15px; display: block;">
+        <button class="btn" style="background:#ef6c00;" id="btn-upload" onclick="uploadEAnexar()"> Finalizar e Enviar ao GLPI</button>
+    </div>
+</main>
+</div>
+
+<div class="modal" id="modal-preview">
+<div class="modal-content">
+<div style="padding:15px; border-bottom:1px solid #eee; display:flex; justify-content:space-between; background: #f8f9fa; position: sticky; top: 0; z-index: 10;">
+<h3>Visualização Técnica do Documento</h3>
+<button class="btn" style="background:#666;" onclick="fecharPreview()">Fechar</button>
+</div>
+
+    <div style="background: #555; padding: 20px 0;">
+        <div id="document-preview" class="document-preview">
+            <img src="https://i.ibb.co/3yrZTbLN/imagem-fundo.png" class="watermark">
+            <img src="https://i.ibb.co/xqHQHSgX/2-small.png" class="logo-left">
+            <img src="https://i.ibb.co/vxKm5wQz/imagem-topo-esquerdo.png" class="logo-right">
+            
+            <table class="header-table">
+                <tr>
+                    <td>Código: SGSI_REG-13</td>
+                    <td>Versão: 1.0</td>
+                    <td>Classificação: Uso Público</td>
+                </tr>
+            </table>
+
+            <div class="document-content">
+                <h1 class="title-laudo">Laudo Técnico de TI</h1>
+                <div class="info-box">
+                    <div class="info-row"><strong>Nº do Chamado:</strong> <span id="pdf-id"></span></div>
+                    <div class="info-row"><strong>Data de Emissão:</strong> <span id="pdf-date"></span></div>
+                </div>
+                <div id="pdf-text-content" class="pure-text-area"></div>
+            </div>
+        </div>
+    </div>
+
+    <div style="padding:15px; border-top:1px solid #eee; display:flex; justify-content:flex-end; gap:10px; background: #f8f9fa;">
+        <button class="btn" style="background:#666;" onclick="fecharPreview()">Cancelar</button>
+        <button class="btn" style="background:#007bff;" onclick="baixarEPrepararAnexo()">📥 Baixar PDF</button>
+        <button class="btn" style="background:#28a745;" onclick="gerarEAnexarPdf()">📤 Gerar PDF e Anexar ao Ticket</button>
+    </div>
+</div>
+</div>
+
+<script>
+const CONFIG = {
+    API_URL: 'https://glpi.petacorp.com.br/api.php/v1',
+    APP_TOKEN: 'guhEhrBwOaU1Wk6ETIuWc2jZf3tVkL7VWd62oz51',
+    USER_TOKEN: 'PveUan5K0TcmshIlTOmB3x9QqGON2AGwI7AXTwOS'
+};
+
+let SESSION_TOKEN = null;
+let currentTicketId = null;
+let currentTicket = null;        // ← NOVO: armazena o objeto completo do ticket (precisamos do entities_id)
+
+async function makeRequest(endpoint, method = 'GET', data = null, isMultipart = false) {
+    const headers = { 'App-Token': CONFIG.APP_TOKEN };
+
+    if (SESSION_TOKEN) headers['Session-Token'] = SESSION_TOKEN;
+    else headers['Authorization'] = `user_token ${CONFIG.USER_TOKEN}`;
+
+    const options = { method, headers };
+
+    if (data) {
+        if (isMultipart) {
+            options.body = data;
+        } else {
+            headers['Content-Type'] = 'application/json';
+            options.body = JSON.stringify(data);
+        }
+    }
+
+    const res = await fetch(`${CONFIG.API_URL}${endpoint}`, options);
+
+    if (res.status === 404 && endpoint.includes('/search/')) return { data: [] };
+
+    if (!res.ok) {
+        const errText = await res.text();
+        console.error('Resposta do Servidor:', errText);
+        throw new Error(`Erro ${res.status}`);
+    }
+
+    return await res.json();
+}
+
+async function iniciarSessao() {
+    try {
+        const res = await makeRequest('/initSession', 'GET');
+        SESSION_TOKEN = res.session_token;
+        document.getElementById('btn-conectar').textContent = ' Sistema Conectado';
+        document.getElementById('btn-conectar').style.background = '#28a745';
+        document.getElementById('btn-buscar').disabled = false;
+        showAlert('Sessão iniciada com sucesso!', 'success');
+    } catch(e) {
+        showAlert('Falha na autenticação. Verifique os Tokens.');
+    }
+}
+
+async function buscarTickets() {
+    const btn = document.getElementById('btn-buscar');
+    btn.disabled = true;
+    btn.textContent = ' Consultando API…';
+
+    try {
+        const res = await makeRequest('/search/Ticket?criteria[0][field]=7&criteria[0][searchtype]=equals&criteria[0][value]=913&forcedisplay[0]=2&forcedisplay[1]=4&range=0-50');
+        const tbody = document.getElementById('tbody-tickets');
+        tbody.innerHTML = '';
+
+        if (!res.data || res.data.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:20px;">Nenhum ticket encontrado para a categoria 913.</td></tr>';
+            return;
+        }
+
+        res.data.forEach(t => {
+            const tr = document.createElement('tr');
+            tr.innerHTML = `
+                <td><strong>#${t[2]}</strong></td>
+                <td>${t[4] || 'Sem título'}</td>
+                <td><button class="btn" onclick="abrirPreviewLaudo(${t[2]})">Gerar Laudo</button></td>
+            `;
+            tbody.appendChild(tr);
+        });
+        showAlert(`${res.data.length} tickets carregados.`, 'success');
+    } catch(e) { 
+        showAlert('Erro ao buscar tickets. A sessão pode ter expirado.'); 
+    } finally {
+        btn.disabled = false;
+        btn.textContent = ' Buscar Tickets (Categoria 913)';
+    }
+}
+
+async function abrirPreviewLaudo(id) {
+    try {
+        const ticket = await makeRequest(`/Ticket/${id}`);
+        currentTicket = ticket;           // ← armazena o ticket completo
+        currentTicketId = id;
+
+        document.getElementById('pdf-id').textContent = id;
+        document.getElementById('pdf-date').textContent = new Date().toLocaleDateString('pt-BR');
+
+        const temp = document.createElement('div');
+        temp.innerHTML = ticket.content;
+        document.getElementById('pdf-text-content').textContent = (temp.innerText || temp.textContent).trim();
+        
+        document.getElementById('modal-preview').style.display = 'flex';
+    } catch(e) { 
+        showAlert('Erro ao carregar detalhes do chamado.'); 
+    }
+}
+
+// ==================== NOVA FUNÇÃO PRINCIPAL ====================
+async function gerarEAnexarPdf() {
+    const element = document.getElementById('document-preview');
+    const opt = {
+        margin: 0,
+        filename: `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 1.0, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    try {
+        showAlert('Gerando PDF e enviando para o GLPI...', 'success');
+
+        const pdfBlob = await new Promise((resolve, reject) => {
+            html2pdf()
+                .set(opt)
+                .from(element)
+                .toPdf()
+                .get('pdf')
+                .then(jsPDF => resolve(jsPDF.output('blob')))
+                .catch(reject);
+        });
+
+        const filename = `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`;
+        await anexarDocumentoAoTicket(pdfBlob, filename);
+
+        fecharPreview();
+        showAlert('✅ PDF gerado e anexado com sucesso ao ticket!', 'success');
+    } catch(e) {
+        console.error(e);
+        showAlert('Erro ao gerar ou anexar o PDF. Verifique o console (F12).');
+    }
+}
+
+// ==================== FUNÇÃO DE UPLOAD (usada pelo botão automático e manual) ====================
+async function anexarDocumentoAoTicket(fileOrBlob, filename) {
+    const btn = document.getElementById('btn-upload');
+    if (btn) { btn.disabled = true; btn.textContent = ' Enviando ao GLPI...'; }
+
+    try {
+        const formData = new FormData();
+
+        const inputPayload = {
+            name: `Laudo Técnico - Chamado #${currentTicketId}`,
+            entities_id: currentTicket?.entities_id ?? 0,   // ← CORREÇÃO PRINCIPAL (resolve o 500)
+            _filename: [filename]
+        };
+
+        formData.append('input', JSON.stringify(inputPayload));
+        formData.append('filename[]', fileOrBlob, filename);
+
+        // 1. Upload do documento
+        const uploadRes = await makeRequest('/Document', 'POST', formData, true);
+        const docId = uploadRes.id || (Array.isArray(uploadRes) ? uploadRes[0].id : null);
+
+        if (!docId) throw new Error('Falha ao obter ID do documento.');
+
+        // 2. Vincula ao ticket
+        await makeRequest('/Item_Document', 'POST', {
+            input: {
+                documents_id: docId,
+                itemtype: 'Ticket',
+                items_id: currentTicketId
+            }
+        });
+
+        showAlert(' Sucesso! O documento foi anexado ao chamado.', 'success');
+        document.getElementById('upload-box').style.display = 'none';
+        const fileInput = document.getElementById('file-input');
+        if (fileInput) fileInput.value = '';
+        buscarTickets();
+    } catch(e) {
+        console.error(e);
+        showAlert('Erro no upload. Verifique o console (F12) para detalhes.');
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = ' Finalizar e Enviar ao GLPI'; }
+    }
+}
+
+// Mantido para o fluxo manual (baixar + anexar depois)
+function baixarEPrepararAnexo() {
+    const element = document.getElementById('document-preview');
+    const opt = {
+        margin: 0,
+        filename: `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`,
+        image: { type: 'jpeg', quality: 0.98 },
+        html2canvas: { scale: 1.0, useCORS: true, logging: false },
+        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+    };
+
+    html2pdf().set(opt).from(element).save().then(() => {
+        fecharPreview();
+        document.getElementById('target-ticket-id').textContent = currentTicketId;
+        document.getElementById('upload-box').style.display = 'block';
+        document.getElementById('upload-box').scrollIntoView({ behavior: 'smooth' });
+        showAlert('PDF baixado! Agora selecione o arquivo abaixo para enviar.', 'success');
+    });
+}
+
+async function uploadEAnexar() {
+    const fileInput = document.getElementById('file-input');
+    if (!fileInput.files[0]) return showAlert('Selecione o arquivo PDF que você baixou.');
+    const file = fileInput.files[0];
+    if (file.size > 2 * 1024 * 1024) return showAlert('O arquivo excede 2MB.');
+
+    await anexarDocumentoAoTicket(file, file.name);
+}
+
+function fecharPreview() { 
+    document.getElementById('modal-preview').style.display = 'none'; 
+}
+
+function showAlert(msg, type = 'error') {
+    const area = document.getElementById('alert-area');
+    area.innerHTML = `<div class="alert ${type}">${msg}</div>`;
+    setTimeout(() => area.innerHTML = '', 6000);
+}
+</script>
+</body>
+</html>
