@@ -118,8 +118,8 @@ th { background:#f8fbff; color:var(--primary); }
 
     <div style="padding:15px; border-top:1px solid #eee; display:flex; justify-content:flex-end; gap:10px; background: #f8f9fa;">
         <button class="btn" style="background:#666;" onclick="fecharPreview()">Cancelar</button>
-        <button class="btn" style="background:#007bff;" onclick="baixarEPrepararAnexo()">📥 Baixar PDF</button>
-        <button class="btn" style="background:#28a745;" onclick="gerarEAnexarPdf()">📤 Gerar PDF e Anexar ao Ticket</button>
+        <button class="btn" style="background:#007bff;" onclick="baixarEPrepararAnexo()"> Baixar PDF</button>
+        <button class="btn" style="background:#28a745;" onclick="gerarEAnexarPdf()"> Gerar PDF e Anexar ao Ticket</button>
     </div>
 </div>
 </div>
@@ -133,7 +133,7 @@ const CONFIG = {
 
 let SESSION_TOKEN = null;
 let currentTicketId = null;
-let currentTicket = null;        // ← NOVO: armazena o objeto completo do ticket (precisamos do entities_id)
+let currentTicket = null;
 
 async function makeRequest(endpoint, method = 'GET', data = null, isMultipart = false) {
     const headers = { 'App-Token': CONFIG.APP_TOKEN };
@@ -214,7 +214,7 @@ async function buscarTickets() {
 async function abrirPreviewLaudo(id) {
     try {
         const ticket = await makeRequest(`/Ticket/${id}`);
-        currentTicket = ticket;           // ← armazena o ticket completo
+        currentTicket = ticket;
         currentTicketId = id;
 
         document.getElementById('pdf-id').textContent = id;
@@ -230,7 +230,6 @@ async function abrirPreviewLaudo(id) {
     }
 }
 
-// ==================== NOVA FUNÇÃO PRINCIPAL ====================
 async function gerarEAnexarPdf() {
     const element = document.getElementById('document-preview');
     const opt = {
@@ -258,14 +257,13 @@ async function gerarEAnexarPdf() {
         await anexarDocumentoAoTicket(pdfBlob, filename);
 
         fecharPreview();
-        showAlert('✅ PDF gerado e anexado com sucesso ao ticket!', 'success');
+        showAlert(' PDF gerado e anexado com sucesso ao ticket!', 'success');
     } catch(e) {
         console.error(e);
         showAlert('Erro ao gerar ou anexar o PDF. Verifique o console (F12).');
     }
 }
 
-// ==================== FUNÇÃO DE UPLOAD (usada pelo botão automático e manual) ====================
 async function anexarDocumentoAoTicket(fileOrBlob, filename) {
     const btn = document.getElementById('btn-upload');
     if (btn) { btn.disabled = true; btn.textContent = ' Enviando ao GLPI...'; }
@@ -275,20 +273,18 @@ async function anexarDocumentoAoTicket(fileOrBlob, filename) {
 
         const inputPayload = {
             name: `Laudo Técnico - Chamado #${currentTicketId}`,
-            entities_id: currentTicket?.entities_id ?? 0,   // ← CORREÇÃO PRINCIPAL (resolve o 500)
+            entities_id: currentTicket?.entities_id ?? 0,
             _filename: [filename]
         };
 
         formData.append('input', JSON.stringify(inputPayload));
         formData.append('filename[]', fileOrBlob, filename);
 
-        // 1. Upload do documento
         const uploadRes = await makeRequest('/Document', 'POST', formData, true);
         const docId = uploadRes.id || (Array.isArray(uploadRes) ? uploadRes[0].id : null);
 
         if (!docId) throw new Error('Falha ao obter ID do documento.');
 
-        // 2. Vincula ao ticket
         await makeRequest('/Item_Document', 'POST', {
             input: {
                 documents_id: docId,
@@ -310,7 +306,6 @@ async function anexarDocumentoAoTicket(fileOrBlob, filename) {
     }
 }
 
-// Mantido para o fluxo manual (baixar + anexar depois)
 function baixarEPrepararAnexo() {
     const element = document.getElementById('document-preview');
     const opt = {
