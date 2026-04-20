@@ -136,10 +136,10 @@ let SESSION_TOKEN = null;
 let currentTicketId = null;
 let currentTicket = null;
 
-// Função melhorada para requisições com melhor tratamento de erro
-async function makeRequest(endpoint, method = 'GET', data = null, isMultipart = false) {
+async function makeRequest(endpoint, method = 'GET', data = null) {
     const headers = { 
         'App-Token': CONFIG.APP_TOKEN,
+        'Content-Type': 'application/json',
         'Accept': 'application/json'
     };
 
@@ -152,65 +152,59 @@ async function makeRequest(endpoint, method = 'GET', data = null, isMultipart = 
     const options = { 
         method, 
         headers,
-        mode: 'cors',
-        credentials: 'omit'
+        mode: 'cors'
     };
 
-    if (data) {
-        if (isMultipart) {
-            // IMPORTANTE: Não definir Content-Type manualmente em multipart/form-data
-            // O navegador deve definir automaticamente com o boundary correto
-            delete headers['Content-Type'];
-            options.body = data;
-        } else {
-            headers['Content-Type'] = 'application/json';
-            options.body = JSON.stringify(data);
-        }
+    if (data && method !== 'GET') {
+        options.body = JSON.stringify(data);
     }
 
     try {
         const res = await fetch(`${CONFIG.API_URL}${endpoint}`, options);
-        
-        // Tentar obter o corpo da resposta mesmo em erro para debug
         const responseText = await res.text();
-        let responseData;
         
+        let responseData;
         try {
             responseData = JSON.parse(responseText);
         } catch (e) {
             responseData = responseText;
         }
 
-        if (res.status === 404 && endpoint.includes('/search/')) {
-            return { data: [] };
-        }
-
         if (!res.ok) {
-            console.error('Erro na requisição:', {
+            console.error('Erro API:', {
                 status: res.status,
-                statusText: res.statusText,
-                response: responseData,
-                endpoint: endpoint
+                endpoint: endpoint,
+                response: responseData
             });
             
-            // Se for HTML de erro do GLPI, extrair mensagem se possível
-            let errorMessage = `Erro ${res.status}`;
-            if (typeof responseData === 'string' && responseData.includes('Erro')) {
-                // Tentar extrair título ou mensagem do HTML
-                const titleMatch = responseData.match(/<title>(.*?)<\/title>/);
-                if (titleMatch) errorMessage += `: ${titleMatch[1]}`;
-            } else if (responseData && responseData.message) {
-                errorMessage += `: ${responseData.message}`;
+            let msg = `Erro ${res.status}`;
+            if (responseData && responseData.message) msg += `: ${responseData.message}`;
+            else if (typeof responseData === 'string' && responseData.includes('Ocorreu um erro')) {
+                msg += ': Erro interno no servidor (verifique permissões de escrita no GLPI)';
             }
             
-            throw new Error(errorMessage);
+            throw new Error(msg);
         }
 
-        return typeof responseData === 'object' ? responseData : { data: responseData };
+        return responseData;
     } catch (error) {
-        console.error('Detalhes do erro:', error);
+        console.error('Falha na requisição:', error);
         throw error;
     }
+}
+
+// Converte Blob para Base64 (formato puro, sem data URI)
+function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            // Extrai apenas o base64, removendo o prefixo "data:application/pdf;base64,"
+            const base64 = reader.result.split(',')[1];
+            resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
 }
 
 async function iniciarSessao() {
@@ -222,7 +216,7 @@ async function iniciarSessao() {
         document.getElementById('btn-buscar').disabled = false;
         showAlert('Sessão iniciada com sucesso!', 'success');
     } catch(e) {
-        showAlert(`Falha na autenticação: ${e.message}`);
+        showAlert(`Falha: ${e.message}`);
     }
 }
 
@@ -237,7 +231,7 @@ async function buscarTickets() {
         tbody.innerHTML = '';
 
         if (!res.data || res.data.length === 0) {
-            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:20px;">Nenhum ticket encontrado para a categoria 913.</td></tr>';
+            tbody.innerHTML = '<tr><td colspan="3" style="text-align:center; padding:20px;">Nenhum ticket encontrado.</td></tr>';
             return;
         }
 
@@ -252,7 +246,7 @@ async function buscarTickets() {
         });
         showAlert(`${res.data.length} tickets carregados.`, 'success');
     } catch(e) { 
-        showAlert(`Erro ao buscar tickets: ${e.message}`); 
+        showAlert(`Erro: ${e.message}`); 
     } finally {
         btn.disabled = false;
         btn.textContent = ' Buscar Tickets (Categoria 913)';
@@ -261,7 +255,7 @@ async function buscarTickets() {
 
 async function abrirPreviewLaudo(id) {
     try {
-        showAlert('Carregando detalhes do ticket...', 'loading');
+        showAlert('Carregando...', 'loading');
         const ticket = await makeRequest(`/Ticket/${id}`);
         currentTicket = ticket;
         currentTicketId = id;
@@ -271,159 +265,108 @@ async function abrirPreviewLaudo(id) {
 
         const temp = document.createElement('div');
         temp.innerHTML = ticket.content || '';
-        document.getElementById('pdf-text-content').textContent = (temp.innerText || temp.textContent || 'Sem conteúdo').trim();
+        document.getElementById('pdf-text-content').textContent = (temp.innerText || 'Sem conteúdo').trim();
         
         document.getElementById('modal-preview').style.display = 'flex';
         clearAlerts();
     } catch(e) { 
-        showAlert(`Erro ao carregar detalhes: ${e.message}`); 
+        showAlert(`Erro: ${e.message}`); 
     }
 }
 
-// Converte Blob para Base64
-function blobToBase64(blob) {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            // Remove o prefixo "data:application/pdf;base64," se existir
-            const base64 = reader.result.split(',')[1];
-            resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
-}
-
 async function gerarEAnexarPdf() {
-    const element = document.getElementById('document-preview');
-    const opt = {
-        margin: 0,
-        filename: `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 1.0, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
-    };
-
     try {
         showAlert('Gerando PDF...', 'loading');
 
-        const pdfBlob = await new Promise((resolve, reject) => {
-            html2pdf()
-                .set(opt)
-                .from(element)
-                .toPdf()
-                .get('pdf')
-                .then(jsPDF => resolve(jsPDF.output('blob')))
-                .catch(reject);
-        });
+        // Gerar PDF como Blob
+        const element = document.getElementById('document-preview');
+        const opt = {
+            margin: 0,
+            filename: `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`,
+            image: { type: 'jpeg', quality: 0.98 },
+            html2canvas: { scale: 2, useCORS: true },
+            jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        };
 
-        showAlert('Enviando para o GLPI...', 'loading');
+        const pdfBlob = await html2pdf().set(opt).from(element).outputPdf('blob');
         
-        const filename = `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`;
-        await anexarDocumentoAoTicket(pdfBlob, filename);
+        showAlert('Convertendo para Base64...', 'loading');
+        const base64Content = await blobToBase64(pdfBlob);
+        
+        // Upload usando o método correto do GLPI API REST
+        // O GLPI espera _filename como array de objetos com name e content (base64)
+        const payload = {
+            input: {
+                name: `Laudo Técnico - Chamado #${currentTicketId}`,
+                entities_id: currentTicket?.entities_id || 0,
+                is_recursive: 1,
+                _filename: [{
+                    name: `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`,
+                    content: base64Content
+                }]
+            }
+        };
 
+        console.log('Enviando documento:', payload);
+        
+        showAlert('Enviando documento ao GLPI...', 'loading');
+        const uploadRes = await makeRequest('/Document', 'POST', payload);
+        
+        console.log('Resposta upload:', uploadRes);
+        
+        // O GLPI retorna o ID do documento criado
+        const docId = uploadRes.id || (Array.isArray(uploadRes) ? uploadRes[0]?.id : null);
+        
+        if (!docId) {
+            throw new Error('ID do documento não retornado pelo servidor');
+        }
+
+        showAlert(`Documento criado (ID: ${docId}), vinculando ao ticket...`, 'loading');
+        
+        // Vincular ao ticket - endpoint correto é /Document_Item (não /Item_Document)
+        await vincularDocumento(docId, currentTicketId);
+        
         fecharPreview();
-        showAlert('✅ PDF gerado e anexado com sucesso ao ticket!', 'success');
+        showAlert('✅ Laudo anexado com sucesso ao ticket!', 'success');
+        
+        // Atualizar lista
+        setTimeout(() => buscarTickets(), 1000);
+        
     } catch(e) {
         console.error(e);
         showAlert(`Erro: ${e.message}`);
     }
 }
 
-async function anexarDocumentoAoTicket(fileBlob, filename) {
-    // ESTRATÉGIA 1: Tentar upload via Base64 (mais confiável para evitar erros 500 de multipart)
-    try {
-        showAlert('Preparando upload (Base64)...', 'loading');
-        
-        const base64Content = await blobToBase64(fileBlob);
-        
-        // Upload via JSON com conteúdo base64 (muitas APIs REST preferem este método)
-        const payload = {
-            input: {
-                name: `Laudo Técnico - Chamado #${currentTicketId}`,
-                entities_id: currentTicket?.entities_id ?? 0,
-                is_recursive: 1,
-                // Tentativa de upload via base64
-                _filename: {
-                    name: filename,
-                    content: base64Content
-                }
-            }
-        };
-
-        // Primeiro tentar como JSON normal com base64
-        const uploadRes = await makeRequest('/Document', 'POST', payload);
-        
-        if (uploadRes.id || (uploadRes[0] && uploadRes[0].id)) {
-            const docId = uploadRes.id || uploadRes[0].id;
-            await vincularDocumentoAoTicket(docId);
-            return;
-        }
-        
-        throw new Error('Resposta inesperada do servidor');
-        
-    } catch (jsonError) {
-        console.warn('Falha no upload JSON, tentando multipart:', jsonError.message);
-        
-        // ESTRATÉGIA 2: Fallback para Multipart FormData (formato tradicional do GLPI)
-        try {
-            showAlert('Tentando método alternativo...', 'loading');
-            await uploadMultipart(fileBlob, filename);
-        } catch (multipartError) {
-            console.error('Erro no multipart:', multipartError);
-            throw new Error(`Falha no upload: ${multipartError.message}`);
-        }
-    }
-}
-
-async function uploadMultipart(fileBlob, filename) {
-    const formData = new FormData();
-    
-    // Estrutura específica que o GLPI espera para upload de arquivos
-    const inputData = {
-        name: `Laudo Técnico - Chamado #${currentTicketId}`,
-        entities_id: currentTicket?.entities_id ?? 0,
-        is_recursive: 1,
-        _filename: [filename] // Array com nomes dos arquivos
-    };
-    
-    // O campo deve ser 'input' como string JSON
-    formData.append('input', JSON.stringify(inputData));
-    
-    // O arquivo deve estar em 'filename[]' (array) ou 'filename' 
-    // Importante: usar o mesmo nome que está em _filename
-    formData.append('filename[]', fileBlob, filename);
-    
-    // Debug: verificar o que está sendo enviado
-    console.log('Enviando FormData:');
-    for (let [key, value] of formData.entries()) {
-        console.log(key, value instanceof Blob ? `Blob(${value.size} bytes)` : value);
-    }
-
-    const uploadRes = await makeRequest('/Document', 'POST', formData, true);
-    
-    const docId = uploadRes.id || (Array.isArray(uploadRes) ? uploadRes[0]?.id : null);
-    
-    if (!docId) {
-        console.error('Resposta do upload:', uploadRes);
-        throw new Error('Falha ao obter ID do documento após upload');
-    }
-    
-    await vincularDocumentoAoTicket(docId);
-}
-
-async function vincularDocumentoAoTicket(docId) {
-    showAlert('Vinculando documento ao ticket...', 'loading');
-    
-    const linkRes = await makeRequest('/Item_Document', 'POST', {
+async function vincularDocumento(docId, ticketId) {
+    // No GLPI, a relação é Document_Item (classe que liga Document a outros itens)
+    const payload = {
         input: {
             documents_id: docId,
-            itemtype: 'Ticket',
-            items_id: currentTicketId
+            itemtype: "Ticket",
+            items_id: ticketId,
+            entities_id: currentTicket?.entities_id || 0,
+            is_recursive: 1
         }
-    });
+    };
     
-    console.log('Documento vinculado:', linkRes);
+    console.log('Vinculando documento:', payload);
+    
+    try {
+        const res = await makeRequest('/Document_Item', 'POST', payload);
+        console.log('Vinculação sucesso:', res);
+    } catch(e) {
+        // Se falhar com 400, tentar endpoint alternativo (versões antigas do GLPI)
+        console.warn('Falha no endpoint Document_Item, tentando Item_Document...');
+        const altPayload = {
+            input: {
+                documents_id: docId,
+                itemtype: "Ticket",
+                items_id: ticketId
+            }
+        };
+        await makeRequest('/Item_Document', 'POST', altPayload);
+    }
 }
 
 function baixarEPrepararAnexo() {
@@ -431,9 +374,8 @@ function baixarEPrepararAnexo() {
     const opt = {
         margin: 0,
         filename: `Laudo_Tecnico_Ticket_${currentTicketId}.pdf`,
-        image: { type: 'jpeg', quality: 0.98 },
-        html2canvas: { scale: 1.0, useCORS: true, logging: false },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' }
+        html2canvas: { scale: 2, useCORS: true },
+        jsPDF: { unit: 'mm', format: 'a4' }
     };
 
     html2pdf().set(opt).from(element).save().then(() => {
@@ -441,19 +383,45 @@ function baixarEPrepararAnexo() {
         document.getElementById('target-ticket-id').textContent = currentTicketId;
         document.getElementById('upload-box').style.display = 'block';
         document.getElementById('upload-box').scrollIntoView({ behavior: 'smooth' });
-        showAlert('PDF baixado! Agora selecione o arquivo abaixo para enviar.', 'success');
+        showAlert('PDF baixado! Selecione-o abaixo para enviar.', 'success');
     });
 }
 
 async function uploadEAnexar() {
     const fileInput = document.getElementById('file-input');
-    if (!fileInput.files[0]) return showAlert('Selecione o arquivo PDF que você baixou.');
+    if (!fileInput.files[0]) return showAlert('Selecione o arquivo PDF.');
     const file = fileInput.files[0];
     if (file.size > 2 * 1024 * 1024) return showAlert('O arquivo excede 2MB.');
 
     try {
-        await anexarDocumentoAoTicket(file, file.name);
-        showAlert(' Sucesso! O documento foi anexado ao chamado.', 'success');
+        showAlert('Lendo arquivo...', 'loading');
+        const base64 = await new Promise((resolve, reject) => {
+            const reader = new FileReader();
+            reader.onload = () => resolve(reader.result.split(',')[1]);
+            reader.onerror = reject;
+            reader.readAsDataURL(file);
+        });
+
+        const payload = {
+            input: {
+                name: `Laudo Técnico - Chamado #${currentTicketId}`,
+                entities_id: currentTicket?.entities_id || 0,
+                _filename: [{
+                    name: file.name,
+                    content: base64
+                }]
+            }
+        };
+
+        showAlert('Enviando...', 'loading');
+        const res = await makeRequest('/Document', 'POST', payload);
+        const docId = res.id || res[0]?.id;
+        
+        if (!docId) throw new Error('Falha ao criar documento');
+        
+        await vincularDocumento(docId, currentTicketId);
+        
+        showAlert(' Documento anexado com sucesso!', 'success');
         document.getElementById('upload-box').style.display = 'none';
         fileInput.value = '';
         buscarTickets();
@@ -468,15 +436,7 @@ function fecharPreview() {
 
 function showAlert(msg, type = 'error') {
     const area = document.getElementById('alert-area');
-    const div = document.createElement('div');
-    div.className = `alert ${type}`;
-    div.textContent = msg;
-    area.appendChild(div);
-    
-    // Auto-remove após 8 segundos (aumentado para dar tempo de ler)
-    setTimeout(() => {
-        if (div.parentNode) div.parentNode.removeChild(div);
-    }, 8000);
+    area.innerHTML = `<div class="alert ${type}">${msg}</div>`;
 }
 
 function clearAlerts() {
